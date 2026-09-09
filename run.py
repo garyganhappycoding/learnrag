@@ -1,46 +1,30 @@
 """
-RAG Starter Project (Groq + free local embeddings)
+RAG Starter Project (Groq for generation + Hugging Face hosted API for embeddings)
 ----------------------------------------------------------
 Install first:
-    pip install groq chromadb python-dotenv sentence-transformers
+    pip install groq chromadb python-dotenv requests fastapi uvicorn
 
 Add a .env file in the same folder with:
     GROQ_API_KEY=gsk_...
+    HF_TOKEN=hf_...
 
 Get a free Groq key at https://console.groq.com
+Get a free Hugging Face token at https://huggingface.co/settings/tokens
 """
 
 import os
 from dotenv import load_dotenv
 import chromadb
 from groq import Groq
-from sentence_transformers import SentenceTransformer
-
-'''
-get to install fast api to wrap this into a ui'''
+import requests
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
-app = FastAPI()
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-@app.get("/ask")
-def api_ask(question: str):
-    answer = ask_and_get_answer(question)
-    return {"question": question, "answer": answer}
 
 # ---------- STEP 1: Setup & config ----------
 load_dotenv()
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-
-# This downloads a small (~80MB) free embedding model the first time you run it.
-embedder = SentenceTransformer("all-MiniLM-L6-v2")
+HF_TOKEN = os.getenv("HF_TOKEN")
+HF_API_URL = "https://api-inference.huggingface.co/pipeline/feature-extraction/sentence-transformers/all-MiniLM-L6-v2"
 
 CHAT_MODEL = "openai/gpt-oss-120b"  # current fast model on Groq's free tier
 TOP_K = 5
@@ -53,7 +37,6 @@ def load_notes(filepath):
         raise FileNotFoundError(f"File not found: {filepath}")
     with open(filepath, "r", encoding="utf-8") as f:
         text = f.read()
-    # split into paragraphs wherever there is a blank line
     paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
     return paragraphs
 
@@ -72,8 +55,6 @@ def chunk_text(paragraphs, max_chunk_size=150, overlap=30):
 
 chunks = chunk_text(raw_paragraphs)
 print(f"Created {len(chunks)} chunks")
-for i, c in enumerate(chunks):
-    print(f"\n--- Chunk {i} ---\n{c}")
 
 # ---------- STEP 4: Embed & store in a vector database ----------
 # Chroma is a vector database — it stores lists of numbers (embeddings)
@@ -82,7 +63,17 @@ chroma_client = chromadb.PersistentClient(path="./chroma_db")
 collection = chroma_client.get_or_create_collection(name="study_notes")
 
 def embed_text(text):
-    return embedder.encode(text).tolist()
+    """Calls Hugging Face's hosted embedding model instead of running one locally.
+    This keeps our server's memory usage tiny — no torch/transformers needed."""
+    response = requests.post(
+        HF_API_URL,
+        headers={"Authorization": f"Bearer {HF_TOKEN}"},
+        json={"inputs": text}
+    )
+    result = response.json()
+    if isinstance(result, dict) and "error" in result:
+        raise RuntimeError(f"Hugging Face API error: {result['error']}")
+    return result
 
 if collection.count() == 0:
     print("Embedding chunks for the first time...")
@@ -134,21 +125,34 @@ def ask(query):
     print("\n(Retrieved from:", retrieved, ")")
 
 def ask_and_get_answer(query):
-    """Same as ask(), but returns the answer text instead of printing it —
-    needed so run_eval() can check what the answer actually says."""
     retrieved = retrieve(query)
     prompt = build_prompt(query, retrieved)
     return generate_answer(prompt)
 
+# ---------- FastAPI setup ----------
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.get("/ask")
+def api_ask(question: str):
+    answer = ask_and_get_answer(question)
+    return {"question": question, "answer": answer}
+
 # ---------- Evaluation set ----------
 eval_set = [
-    {"question": "why would gary walk away from work that was already paying well and had a track record of success?", "expected_chunk": 2},
+    {"question": "why would gary walk away from work that was already paying well and had a track record of success?", "expected_chunk": [9, 10]},
     {"question": "before he even started university, what kind of leadership positions did he already hold in school?", "expected_chunk": 0},
-    {"question": "beyond just having money, what does true financial freedom actually mean to him?", "expected_chunk": 3},
-    {"question": "what's he hoping to get out of connecting with a specific professor through a university club?", "expected_chunk": 0},
-    {"question": "which thinkers has he mentioned as shaping how he thinks about self-improvement and money?", "expected_chunk": 3},
-    {"question": "what are all the ways he currently makes money, and how does he expect that to shift over time?", "expected_chunk": [2, 3]},
-    {"question": "what's the common thread between the many separate apps he's built and the way he plans out his own life?", "expected_chunk": [1, 5]},
+    {"question": "beyond just having money, what does true financial freedom actually mean to him?", "expected_chunk": 13},
+    {"question": "what's he hoping to get out of connecting with a specific professor through a university club?", "expected_chunk": [0, 1, 2]},
+    {"question": "which thinkers has he mentioned as shaping how he thinks about self-improvement and money?", "expected_chunk": 11},
+    {"question": "what are all the ways he currently makes money, and how does he expect that to shift over time?", "expected_chunk": [9, 10, 13]},
+    {"question": "what's the common thread between the many separate apps he's built and the way he plans out his own life?", "expected_chunk": [7, 8, 15, 16]},
     {"question": "which psychology club at his previous college was he vice president of?", "expected_chunk": None},
     {"question": "what laptop or computer brand does he use for his coding work?", "expected_chunk": None},
     {"question": "how many siblings does gary have?", "expected_chunk": None},
@@ -178,7 +182,7 @@ def run_eval():
 
 # ---------- Main ----------
 if __name__ == "__main__":
-    run_eval()   # run this first to see your score
+    run_eval()
     print("\nAsk a question (type 'exit' or 'quit' to stop):\n")
     while True:
         user_question = input("Q: ").strip()
