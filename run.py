@@ -2,14 +2,11 @@
 RAG Starter Project (Groq for generation + Hugging Face hosted API for embeddings)
 ----------------------------------------------------------
 Install first:
-    pip install groq chromadb python-dotenv huggingface_hub fastapi uvicorn
+    pip install groq chromadb python-dotenv huggingface_hub fastapi uvicorn slowapi
 
 Add a .env file in the same folder with:
     GROQ_API_KEY=gsk_...
     HF_TOKEN=hf_...
-
-Get a free Groq key at https://console.groq.com
-Get a free Hugging Face token at https://huggingface.co/settings/tokens
 """
 
 import os
@@ -17,15 +14,18 @@ from dotenv import load_dotenv
 import chromadb
 from groq import Groq
 from huggingface_hub import InferenceClient
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 # ---------- STEP 1: Setup & config ----------
 load_dotenv()
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 hf_client = InferenceClient(token=os.getenv("HF_TOKEN"))
 
-CHAT_MODEL = "openai/gpt-oss-120b"  # current fast model on Groq's free tier
+CHAT_MODEL = "openai/gpt-oss-120b"
 TOP_K = 5
 
 # ---------- STEP 2: Load raw data ----------
@@ -56,15 +56,10 @@ chunks = chunk_text(raw_paragraphs)
 print(f"Created {len(chunks)} chunks")
 
 # ---------- STEP 4: Embed & store in a vector database ----------
-# Chroma is a vector database — it stores lists of numbers (embeddings)
-# and searches by closeness in meaning, not exact keyword match like MySQL.
 chroma_client = chromadb.PersistentClient(path="./chroma_db")
 collection = chroma_client.get_or_create_collection(name="study_notes")
 
 def embed_text(text):
-    """Calls Hugging Face's hosted embedding model via their official client
-    library, which handles endpoint routing internally instead of a hardcoded
-    URL — keeps our server's memory usage tiny, no torch/transformers needed."""
     result = hf_client.feature_extraction(text, model="sentence-transformers/all-MiniLM-L6-v2")
     return result.tolist()
 
@@ -132,8 +127,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 @app.get("/ask")
-def api_ask(question: str):
+@limiter.limit("5/minute")
+def api_ask(request: Request, question: str):
     answer = ask_and_get_answer(question)
     return {"question": question, "answer": answer}
 
