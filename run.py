@@ -2,7 +2,7 @@
 RAG Starter Project (Groq for generation + Hugging Face hosted API for embeddings)
 ----------------------------------------------------------
 Install first:
-    pip install groq chromadb python-dotenv requests fastapi uvicorn
+    pip install groq chromadb python-dotenv huggingface_hub fastapi uvicorn
 
 Add a .env file in the same folder with:
     GROQ_API_KEY=gsk_...
@@ -16,15 +16,14 @@ import os
 from dotenv import load_dotenv
 import chromadb
 from groq import Groq
-import requests
+from huggingface_hub import InferenceClient
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 # ---------- STEP 1: Setup & config ----------
 load_dotenv()
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-HF_TOKEN = os.getenv("HF_TOKEN")
-HF_API_URL = "https://api-inference.huggingface.co/pipeline/feature-extraction/sentence-transformers/all-MiniLM-L6-v2"
+hf_client = InferenceClient(token=os.getenv("HF_TOKEN"))
 
 CHAT_MODEL = "openai/gpt-oss-120b"  # current fast model on Groq's free tier
 TOP_K = 5
@@ -63,17 +62,11 @@ chroma_client = chromadb.PersistentClient(path="./chroma_db")
 collection = chroma_client.get_or_create_collection(name="study_notes")
 
 def embed_text(text):
-    """Calls Hugging Face's hosted embedding model instead of running one locally.
-    This keeps our server's memory usage tiny — no torch/transformers needed."""
-    response = requests.post(
-        HF_API_URL,
-        headers={"Authorization": f"Bearer {HF_TOKEN}"},
-        json={"inputs": text}
-    )
-    result = response.json()
-    if isinstance(result, dict) and "error" in result:
-        raise RuntimeError(f"Hugging Face API error: {result['error']}")
-    return result
+    """Calls Hugging Face's hosted embedding model via their official client
+    library, which handles endpoint routing internally instead of a hardcoded
+    URL — keeps our server's memory usage tiny, no torch/transformers needed."""
+    result = hf_client.feature_extraction(text, model="sentence-transformers/all-MiniLM-L6-v2")
+    return result.tolist()
 
 if collection.count() == 0:
     print("Embedding chunks for the first time...")
