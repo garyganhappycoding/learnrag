@@ -25,7 +25,6 @@ import json
 from datetime import datetime
 
 
-
 class ChatMessage(BaseModel):
     role: str      # "user" or "assistant"
     content: str
