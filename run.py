@@ -21,6 +21,10 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from pydantic import BaseModel
 from typing import List
+import json
+from datetime import datetime
+
+
 
 class ChatMessage(BaseModel):
     role: str      # "user" or "assistant"
@@ -29,6 +33,18 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     question: str
     history: List[ChatMessage] = []
+
+LOG_FILE = "chat_logs.jsonl"
+
+def log_interaction(question, answer, history_length):
+    log_entry = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "question": question,
+        "answer": answer,
+        "history_length": history_length
+    }
+    with open(LOG_FILE, "a", encoding="utf-8") as f:
+        f.write(json.dumps(log_entry) + "\n")
 
 # ---------- STEP 1: Setup & config ----------
 load_dotenv()
@@ -154,6 +170,7 @@ def api_ask(request: Request, chat_request: ChatRequest):
     retrieved = retrieve(chat_request.question)
     prompt = build_prompt(chat_request.question, retrieved, chat_request.history)
     answer = generate_answer(prompt)
+    log_interaction(chat_request.question, answer, len(chat_request.history))
     return {"question": chat_request.question, "answer": answer}
 
 # ---------- Evaluation set ----------

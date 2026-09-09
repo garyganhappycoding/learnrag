@@ -1,29 +1,42 @@
-<script>
-    let conversationHistory = [];
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Ask About Gary</title>
+</head>
+<body>
+    <h1>Ask a question</h1>
+    <input type="text" id="questionInput" placeholder="Type your question here" style="width: 400px;">
+    <button onclick="askQuestion()">Ask</button>
+    <p id="answerBox"></p>
 
-    async function askQuestion() {
-        const question = document.getElementById("questionInput").value;
-        const answerBox = document.getElementById("answerBox");
-        answerBox.innerText = "Thinking...";
+    <script>
+        let conversationHistory = [];
 
-        const response = await fetch("https://learnrag.onrender.com/ask", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                question: question,
-                history: conversationHistory
-            })
-        });
+        async function askQuestion() {
+            const question = document.getElementById("questionInput").value;
+            const answerBox = document.getElementById("answerBox");
+            answerBox.innerText = "Thinking...";
 
-        if (response.status === 429) {
-            answerBox.innerText = "You're asking too quickly — please wait a minute and try again.";
-            return;
+            const response = await fetch("https://learnrag.onrender.com/ask", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    question: question,
+                    history: conversationHistory
+                })
+            });
+
+            if (response.status === 429) {
+                answerBox.innerText = "You're asking too quickly — please wait a minute and try again.";
+                return;
+            }
+
+            const data = await response.json();
+            answerBox.innerText = data.answer;
+
+            conversationHistory.push({ role: "user", content: question });
+            conversationHistory.push({ role: "assistant", content: data.answer });
         }
-
-        const data = await response.json();
-        answerBox.innerText = data.answer;
-
-        conversationHistory.push({ role: "user", content: question });
-        conversationHistory.push({ role: "assistant", content: data.answer });
-    }
-</script>
+    </script>
+</body>
+</html>
