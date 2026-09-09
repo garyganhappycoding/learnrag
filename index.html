@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Ask About Gary</title>
+</head>
+<body>
+    <h1>Ask a question</h1>
+    <input type="text" id="questionInput" placeholder="Type your question here" style="width: 400px;">
+    <button onclick="askQuestion()">Ask</button>
+    <p id="answerBox"></p>
+
+    <script>
+        async function askQuestion() {
+            const question = document.getElementById("questionInput").value;
+            const answerBox = document.getElementById("answerBox");
+            answerBox.innerText = "Thinking...";
+
+            const response = await fetch(`http://127.0.0.1:8000/ask?question=${encodeURIComponent(question)}`);
+            const data = await response.json();
+
+            answerBox.innerText = data.answer;
+        }
+    </script>
+</body>
+</html>
